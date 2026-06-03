@@ -1,0 +1,8 @@
+# Logs de transcript générés automatiquement par le script
+*.log
+CleanPUA_*.log
+
+Thumbs.db
+desktop.ini
+
+.vscode/
