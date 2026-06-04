@@ -42,6 +42,7 @@ Il a été conçu avec une approche **defensive-first** : chaque suppression est
 | **ManualFinder** | Adware / fausse recherche de manuels | Payloads JS dans `%TEMP%`, tâches planifiées à préfixe aléatoire |
 | **OneStart** | Pirate de navigateur + groupeur PDF | Basé sur Chromium, persistance dans `system32\config\systemprofile`, détournement de politiques |
 | **EpiBrowser** | Pirate de navigateur | Basé sur Chromium, technique `ShimInclusionList` dans le registre |
+| **PDFSpark** | Stager de malwares / Infostealer et Adware | Application Electron (Nativefier), installeur Delphi, évasion de sandbox (WINE), persistance croisée via `OneBrowser` |
 
 > 📌 **Dépôt de référence pour l'intel PUA :** [xephora/Threat-Remediation-Scripts](https://github.com/xephora/Threat-Remediation-Scripts)
 
