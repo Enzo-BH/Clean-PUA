@@ -79,6 +79,24 @@ $TargetApps = @(
         TaskURIs             = @()
     },
     @{
+        Name                 = "PDFSpark"
+        ServiceNames         = @("Obupdate", "OBUpdateService")
+        ProcessNames         = @("PDFSpark", "PDFSparkWare", "pdfsetup", "OBUpdateService", "OBUpdater", "onebrowser")
+        ProcessPathFilters   = @("*\appdata\local\programs\pdf_spark\*", "*\appdata\local\onebrowser\*", "*\program files (x86)\onebrowser\*") 
+        MSICode              = $null
+        UninstallerRelPath   = "AppData\Local\Programs\PDF_Spark\unins000.exe" 
+        InstallLocationHint  = "AppData\Local\Programs\PDF_Spark"
+        UserDirectories      = @("AppData\Local\Programs\PDF_Spark", "AppData\Roaming\pdfspark-nativefier-41608d", "AppData\Local\OneBrowser", "AppData\Roaming\Microsoft\Windows\Start Menu\Programs\OneBrowser")
+        UserFiles            = @("Desktop\PDFSpark.lnk", "Desktop\PDF Spark.lnk", "AppData\Roaming\Microsoft\Windows\Start Menu\Programs\OneBrowser.lnk")
+        UserGlobs            = @("Downloads\PDFSparkOnSoft_*.exe", "Downloads\PDFSparkWare_*.exe", "Downloads\pdfsetup*.exe")
+        GlobalDirectories    = @("C:\Program Files (x86)\OneBrowser")
+        HKLMRegPaths         = @("HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\PDF_Spark_is1", "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\PDF_Spark_is1")
+        HKURegPaths          = @("Software\PDF_Spark", "Software\SparkOnSoft", "Software\OneBrowser", "Software\Microsoft\Windows\CurrentVersion\Uninstall\PDF_Spark_is1")
+        HKURunKeys           = @("PDFSpark", "OneBrowser") 
+        TaskPrefixes         = @("OBUpdate", "PDFSpark")
+        TaskURIs             = @("\OBUpdate")
+    },
+    @{
         Name                 = "PDFPro Suite"
         ServiceNames         = @("PDFProSuiteCoreService", "PDFProUpdateSvc", "DocuFlexSvc")
         ProcessNames         = @("pdfprosuite", "pdfpro", "DocuFlex", "pdfpro-update")
