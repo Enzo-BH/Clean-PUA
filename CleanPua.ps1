@@ -79,6 +79,25 @@ $TargetApps = @(
         TaskURIs             = @()
     },
     @{
+        Name                 = "PulseBrowser"
+        ServiceNames         = @()
+        ProcessNames         = @("pulsebrowser", "updater", "UpdaterSetup")
+        ProcessPathFilters   = @("*\appdata\local\pulsesoftware\*", "*\appdata\local\temp\pulsesoftware*")
+        MSICode              = $null
+        UninstallerRelPath   = $null
+        InstallLocationHint  = "AppData\Local\PulseSoftware"
+        UserDirectories      = @("AppData\Local\PulseSoftware", "AppData\Local\PulseSoftware\PulseBrowser", "AppData\Local\PulseSoftware\PulseBrowserUpdater")
+        UserFiles            = @()
+        UserGlobs            = @("Downloads\PulseBrowser*.exe", "AppData\Local\Temp\PulseSoftware*")
+        GlobalDirectories    = @()
+        HKLMRegPaths         = @()
+        HKLMRunKeys          = @("PulseBrowser", "PulseBrowserUpdaterTaskUser*")
+        HKURegPaths          = @("Software\PulseBrowser", "Software\PulseSoftware", "Software\Microsoft\Windows\CurrentVersion\Run\PulseBrowser*", "Software\Microsoft\Windows\CurrentVersion\Run\PulseBrowserUpdaterTaskUser*")
+        HKURunKeys           = @("PulseBrowserUpdaterTaskUser*", "PulseBrowser")
+        TaskPrefixes         = @("PulseBrowser","PulseBrowserUpdater","PulseSoftware")
+        TaskURIs             = @("\PulseSoftware")
+    },
+    @{
         Name                 = "PDFSpark"
         ServiceNames         = @("Obupdate", "OBUpdateService")
         ProcessNames         = @("PDFSpark", "PDFSparkWare", "pdfsetup", "OBUpdateService", "OBUpdater", "onebrowser")
@@ -246,8 +265,10 @@ for ($i = 0; $i -lt $TargetApps.Count; $i++) {
                 # VALIDATION DE SECU SI CA POINTE VERS UN ENDROIT CRITIQUE
                 $SvcRegPath = "HKLM:\SYSTEM\CurrentControlSet\Services\$SvcName"
                 $ImagePath = (Get-ItemProperty -Path $SvcRegPath -Name ImagePath -ErrorAction SilentlyContinue).ImagePath
-                if ($ImagePath -and $ImagePath -notmatch "appdata|local|roaming|temp|onestart|shift|pdfpro|manualfinder|epibrowser") {
-                    Write-Warning "[!] Conflit de nommage detecte : Le service '$SvcName' pointe vers un binaire potentiellement sain ($ImagePath). Annulation."
+                $PuaKeywords = "appdata|local|roaming|temp|onestart|shift|pdf\s*pro|docuflex|pdf\s*spark|onebrowser|obupdate|obupdater|pdfinstaller|pdfinst|manualfinder|openmymanual|pdf\s*editor|epibrowser|episoftware"
+                
+                if ($ImagePath -and $ImagePath -notmatch $PuaKeywords) {
+                    Write-Warning "[!] Conflit de nommage detecte : Le service '$SvcName' pointe vers un binaire potentiellement sain ($ImagePath)"
                     continue
                 }
 
@@ -468,14 +489,27 @@ for ($i = 0; $i -lt $TargetApps.Count; $i++) {
         }
     }
     if ($DetectedMSI) {
-        if ($DryRun) {
-            Write-Host " [DRY-RUN] Desinstallation MSI prevue pour le GUID : $DetectedMSI" -ForegroundColor DarkYellow
+        # CHECK STRICTEMENT QUE C'EST UN GUID MSI VALIDE
+        if ($DetectedMSI -match '^\{[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\}$') {
+            if ($DryRun) {
+                Write-Host " [DRY-RUN] Desinstallation MSI prevue pour le GUID : $DetectedMSI" -ForegroundColor DarkYellow
+            } else {
+                Write-Host " [!] Lancement Desinstallation MsiExec: $DetectedMSI" -ForegroundColor Gray
+                
+                # ON CAPTURE LE PROCESSUS ET CHECK LE CODE DE RETOUR
+                $procMsi = Start-Process "msiexec.exe" -ArgumentList "/X$DetectedMSI /qn /norestart" -Wait -PassThru
+                if ($procMsi.ExitCode -eq 0 -or $procMsi.ExitCode -eq 3010) {
+                    Write-Host "   [+] Succes : MsiExec a termine la desinstallation (Code: $($procMsi.ExitCode))." -ForegroundColor Green
+                } else {
+                    Write-Warning "   [!] MsiExec a echoue avec le code retour $($procMsi.ExitCode)."
+                }
+            }
         } else {
-            Write-Host " [!] Lancement MsiExec: $DetectedMSI" -ForegroundColor Gray
-            Start-Process "msiexec.exe" -ArgumentList "/X$DetectedMSI /qn /norestart" -Wait -PassThru | Out-Null
-            Write-Host "   [+] Succes : MsiExec a termine la desinstallation." -ForegroundColor Green
+            # SI C4EST UN FAUX MSI 
+            Write-Warning "   [!] Le code detecte '$DetectedMSI' n'est pas un GUID MSI valide. Msiexec ignore la desinstallation binaire ou manuelle prendra le relais."
         }
     }
+
     #  SUPRESSION DIRECTORIES, SHEETS & TASKS
     Write-Host "[>] Application: $($App.Name)" -ForegroundColor White
     $RawPaths = @()
@@ -611,7 +645,31 @@ for ($i = 0; $i -lt $TargetApps.Count; $i++) {
             }
         }
     }
-
+    if ($App.HKLMRunKeys) {
+        $HKLMRunBases = @(
+            "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
+            "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run"
+        )
+        foreach ($Base in $HKLMRunBases) {
+            if (Test-Path $Base) {
+                $RunKeyItem = Get-Item -Path $Base -ErrorAction SilentlyContinue
+                foreach ($k in $App.HKLMRunKeys) {
+                    if ($k) {
+                        $MatchingProps = $RunKeyItem.Property | Where-Object { $_ -like $k }
+                        foreach ($PropName in $MatchingProps) {
+                            if ($DryRun) {
+                                Write-Host " [DRY-RUN] Valeur Run HKLM a supprimer : $PropName dans $Base" -ForegroundColor DarkYellow
+                            } else {
+                                Write-Host " [-] Suppression Registre HKLM (RunKey) : $PropName" -ForegroundColor Red
+                                Remove-ItemProperty -Path $Base -Name $PropName -Force -ErrorAction SilentlyContinue
+                                Write-Host "   [+] Valeur de demarrage HKLM '$PropName' supprimee." -ForegroundColor Green
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 Write-Host "[*] USER REGISTER CLEANUP..." -ForegroundColor Cyan
@@ -678,8 +736,8 @@ foreach ($RegProfile in $RegistryProfiles) {
                         $Value = (Get-ItemProperty -LiteralPath $Path -Name $Property -ErrorAction SilentlyContinue).$Property
                         
                         # on ne supprime que si match empreinte d'un PUA
-                        if ($Value -match 'onestart|shift|epibrowser|docuflex|pdfpro') {
-                            if ($DryRun) {
+                        if ($Value -match 'onestart|shift|epibrowser|docuflex|pdf\s*pro|pulse|spark') {
+                                if ($DryRun) {
                                 Write-Host "     [DRY-RUN] Politique PUA detectee : $Property = $Value dans $Path" -ForegroundColor DarkYellow
                             } else {
                                 Write-Host "     [-] SUPPRESSION ENTREE POLITIQUE : $Property ($Value)" -ForegroundColor Red
@@ -717,7 +775,6 @@ foreach ($RegProfile in $RegistryProfiles) {
                     }
                 }
             }
-
             # REG PATHS
             if ($App.HKURegPaths) {
                 foreach ($p in $App.HKURegPaths) { 
@@ -773,7 +830,7 @@ foreach ($RegProfile in $RegistryProfiles) {
             [System.GC]::Collect()
             [System.GC]::WaitForPendingFinalizers()
             [System.GC]::Collect()
-            Start-Sleep -Seconds 1.5
+            Start-Sleep -Seconds 1.25
 
             #  DEMONTAGE
             $procUnload = Start-Process -FilePath "reg.exe" -ArgumentList "unload `"HKU\$TempName`"" -Wait -PassThru -WindowStyle Hidden
