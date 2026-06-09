@@ -1,147 +1,142 @@
-# Advanced Unified PUA Uninstaller
+# PUA Uninstaller
 ![PowerShell](https://img.shields.io/badge/PowerShell-5.1%2B-blue?logo=powershell)
 ![Platform](https://img.shields.io/badge/Platform-Windows-blue?logo=windows)
 ![License](https://img.shields.io/badge/License-MIT-green)
-![Maintained](https://img.shields.io/badge/Maintained-Yes-brightgreen)
 
-> **Pipeline de remédiation PowerShell de niveau SOC pour les Applications Potentiellement Indésirables sur endpoints Windows.**  
-> Conçu pour les équipes de Réponse sur Incident, les équipes Sécurité IT et les administrateurs systèmes confrontés aux pirates de navigateurs, adwares et familles de PUA groupés.
-
----
-
-## Table des matières
-
-- [Vue d'ensemble](#vue-densemble)
-- [Menaces couvertes](#menaces-couvertes)
-- [Architecture du pipeline](#architecture-du-pipeline)
-- [Mécanismes de sécurité](#mécanismes-de-sécurité)
-- [Utilisation](#utilisation)
-- [Mode DryRun](#mode-dryrun)
-- [Ce qui est nettoyé](#ce-qui-est-nettoyé)
-- [Ajouter de nouvelles cibles PUA](#ajouter-de-nouvelles-cibles-pua)
-- [Prérequis](#prérequis)
-- [Avertissement](#avertissement)
+> **PowerShell remediation pipeline for Potentially Unwanted Applications (PUAs) on Windows endpoints.**
+> Built for Incident Response (IR) teams, IT Security engineers, and system administrators dealing with persistent browser hijackers, adwares, and bundled PUA families.
 
 ---
 
-## Vue d'ensemble
+## Table of Contents
 
-Ce script fournit un pipeline de nettoyage structuré, sécurisé et auditable pour les familles de PUA connues sur les systèmes Windows. Il va bien au-delà de la simple suppression de fichiers — il traite la **surface de persistance complète** de chaque menace : processus, services, tâches planifiées, clés de registre (y compris les ruches hors ligne), politiques de navigateur et artefacts d'installation.
-
-Il a été conçu avec une approche **defensive-first** : chaque suppression est soumise à une pile de validation multi-couches pour prévenir la destruction accidentelle de fichiers système légitimes, même en présence de conditions adversariales (attaques par lien symbolique, collisions de nommage, payloads obfusqués).
+- [Overview](#overview)
+- [Covered Threats](#covered-threats)
+- [Pipeline Architecture](#pipeline-architecture)
+- [Security Mechanisms](#security-mechanisms)
+- [Usage](#usage)
+- [DryRun Mode](#dryrun-mode)
+- [What Is Cleaned](#what-is-cleaned)
+- [Adding New PUA Targets](#adding-new-pua-targets)
+- [Prerequisites](#prerequisites)
+- [Disclaimer](#disclaimer)
 
 ---
 
-## Menaces couvertes
+## Overview
 
-| Famille PUA | Type | Vecteurs principaux |
+This script provides a structured, secure, and auditable cleanup pipeline for known PUA families on Windows systems. It goes far beyond basic file deletion by wiping the **complete persistence surface** of each threat: processes, services, scheduled tasks, registry keys (including offline user hives), browser policies, and installer stubs.
+
+Engineered with a **defensive-first** approach, every deletion undergoes a multi-layered validation stack to prevent accidental destruction of legitimate system files, even under adversarial conditions (symlink attacks, naming collisions, obfuscated payloads).
+
+---
+
+## Covered Threats
+
+| PUA Family | Type | Main Vectors |
 |---|---|---|
-| **Shift** | Pirate de navigateur / espace de travail | Application Electron, installation par setup, auto-lancement via clés Run |
-| **PDF Pro Suite** | Adware / faux outil PDF | Distribution MSI, injection de browser helper |
-| **PDFInstaller** | Dropper / vecteur infostealer | Basé sur `node.exe`, staging dans le répertoire temp |
-| **ManualFinder** | Adware / fausse recherche de manuels | Payloads JS dans `%TEMP%`, tâches planifiées à préfixe aléatoire |
-| **OneStart** | Pirate de navigateur + groupeur PDF | Basé sur Chromium, persistance dans `system32\config\systemprofile`, détournement de politiques |
-| **EpiBrowser** | Pirate de navigateur | Basé sur Chromium, technique `ShimInclusionList` dans le registre |
-| **PDFSpark** | Stager de malwares / Infostealer et Adware | Application Electron (Nativefier), installeur Delphi, évasion de sandbox (WINE), persistance croisée via `OneBrowser` |
+| **Shift** | Browser hijacker / fake workspace | Electron app, standard setup installer, auto-launch via Run keys |
+| **PulseBrowser** | Browser hijacker | Chromium-based, multi-profile user staging, dual HKLM/HKCU run key persistence |
+| **PDFSpark** | Malware stager / Infostealer & Adware | Electron app (Nativefier), Delphi installer, sandbox evasion (WINE), cross-persistence via `OneBrowser` |
+| **PDFPro Suite** | Adware / fake PDF utility | MSI distribution, browser helper injection |
+| **PDFInstaller** | Dropper / Infostealer vector | `node.exe` based, staging inside the temp directory |
+| **ManualFinder** | Adware / fake manual search tool | JS payloads in `%TEMP%`, randomized prefix scheduled tasks |
+| **OneStart** | Browser hijacker + PDF bundler | Chromium-based, persistence in `system32\config\systemprofile`, policy hijacking |
+| **EpiBrowser** | Browser hijacker | Chromium-based, uses the `ShimInclusionList` registry technique |
 
-> 📌 **Dépôt de référence pour l'intel PUA :** [xephora/Threat-Remediation-Scripts](https://github.com/xephora/Threat-Remediation-Scripts)
+> 📌 **Reference repository for PUA Intel:** [xephora/Threat-Remediation-Scripts](https://github.com/xephora/Threat-Remediation-Scripts)
 
 ---
 
-## Architecture du pipeline
+## Pipeline Architecture
 
-Le script exécute un pipeline strictement ordonné en 5 phases :
+The script executes a strictly sequenced 5-phase remediation pipeline:
 
 ```
 CONFIG ──► RESOLVE ──► NORMALIZE ──► VALIDATE ──► DELETE
 ```
 
-**Phase 1 — CONFIG**  
-Chargement de la threat intelligence (applications cibles, racines protégées, exceptions en liste blanche) et initialisation du transcript d'audit dans `%TEMP%`.
+**Phase 1 — CONFIG** Loads the threat intelligence matrix, initializes the audit transcript inside `%TEMP%`, and automatically generates the dynamic security regex pattern based on the configured app names, services, and processes.
 
-**Phase 2 — RESOLVE**  
-Découverte de tous les profils utilisateurs via une énumération à double source (système de fichiers `C:\Users\` + CIM `Win32_UserProfile` pour les SIDs actifs). Expansion de tous les chemins relatifs par profil, résolution des patterns glob directement depuis le disque.
+**Phase 2 — RESOLVE** Discovers all user profiles via a dual-source enumeration (filesystem scavenging of `C:\Users\` + CIM query of `Win32_UserProfile` for active SIDs). Expands all relative paths per profile and resolves file glob patterns directly from the disk.
 
-**Phase 3 — NORMALIZE**  
-Tous les chemins collectés sont normalisés en chemins absolus en minuscules via `[System.IO.Path]::GetFullPath()`. Les lignes de commande des tâches planifiées sont assainies (séquences d'échappement supprimées, variables d'environnement expansées, payloads PS en Base64 décodés).
+**Phase 3 — NORMALIZE** All collected paths are resolved to absolute, lowercase strings using `[System.IO.Path]::GetFullPath()`. Scheduled task command lines are sanitized (escaping sequences removed, environment variables expanded, and Base64-encoded PowerShell payloads decoded).
 
-**Phase 4 — VALIDATE**  
-Chaque chemin passe par un filtre de rejet à 4 couches avant toute action (voir [Mécanismes de sécurité](#mécanismes-de-sécurité)).
+**Phase 4 — VALIDATE** Every single path is fed into a 4-layer rejection engine before any deletion occurs (see [Security Mechanisms](#security-mechanisms)).
 
-**Phase 5 — DELETE**  
-Exécution de la suppression dans un ordre strict : Services → Tâches planifiées → Processus → Désinstallateurs binaires → Désinstallateurs MSI → Fichiers/Dossiers → Registre HKLM → Registre HKU (avec montage de ruches hors ligne).
+**Phase 5 — DELETE** Executes remediation in a non-destructive safety order: Services ──► Scheduled Tasks ──► Active Processes ──► Binary Uninstallers ──► MSI Packaged Uninstallers ──► WMI Event Subscriptions ──► Files/Directories ──► HKLM Registry ──► HKU Registry (including offline NTUSER.DAT mounting).
 
 ---
 
-## Mécanismes de sécurité
+## Security Mechanisms
 
-Ce script est conçu en partant du principe qu'un PUA peut tenter de résister ou d'exploiter le processus de nettoyage lui-même.
+This script assumes a PUA might actively resist or try to exploit the remediation process itself.
 
-### Protection contre les attaques TOCTOU / Lien symbolique
-Avant toute suppression de répertoire, une vérification finale via `Get-Item` confirme que la cible **n'est pas un ReparsePoint**. Cela prévient une attaque où un malware remplacerait son propre répertoire par une jonction vers `C:\Windows` quelques instants avant la suppression.
+### TOCTOU / Symlink Attack Mitigation
+Right before a directory deletion occurs, a final check via `Get-Item` validates that the target **is not a ReparsePoint**. This distributes defense against attacks where a malware replaces its own folder with a junction pointing to `C:\Windows` right before the deletion execution.
 
 ```powershell
 if ($FinalCheck.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
-    Write-Warning "[!] Point de reparse détecté au dernier moment sur $Path ! Suppression annulée."
+    Write-Warning "[!] Un point de reparse/lien symbolique a ete detecte au dernier moment sur $Path ! Suppression annulee."
     continue
 }
 ```
 
-### Validation de l'en-tête PE (Magic Bytes)
-Avant d'exécuter tout désinstallateur binaire, le script lit les 2 premiers octets du fichier pour vérifier la signature `MZ` (`0x4D 0x5A`). Les fichiers non-PE sont ignorés silencieusement.
+### PE Header Validation (Magic Bytes)
+Before executing any vendor binary uninstaller found on the disk, the script opens the file stream and reads the first 2 bytes to confirm the `MZ` signature (`0x4D 0x5A`). Non-PE files are silently ignored.
 
-### Protection filesystem multi-couches
+### Multi-Layered Filesystem Safeguards
 
-| Couche | Ce qu'elle protège |
+| Guard Layer | What It Protects |
 |---|---|
-| `HardProtectedRoots` | `C:\Windows`, `System32`, `SysWOW64` (avec exceptions en liste blanche pour les chemins PUA connus dans system32) |
-| `ContainerRoots` | `C:\`, `C:\Users`, `C:\Program Files`, `C:\ProgramData`, etc. |
-| Regex containers de profil | Bloque la suppression brute de `AppData\Local`, `AppData\Roaming`, `Downloads`, `Desktop`, `Documents` |
+| HardProtectedRoots | `C:\Windows`, `System32`, `SysWOW64` (with explicit allowlisted exceptions for known PUA stubs inside system32) |
+| ContainerRoots | `C:\`, `C:\Users`, `C:\Program Files`, `C:\ProgramData`, etc. |
+| User Profile Regex | Blocks bulk deletion of root profile folders like `AppData\Local`, `AppData\Roaming`, `Downloads`, `Desktop`, `Documents` |
 
-### Rejet des namespaces Win32 et ADS
-Les chemins correspondant aux namespaces device `\\?\` / `\\.\` ou aux Alternate Data Streams (pattern `:$DATA`) sont rejetés avant tout traitement.
+### Win32 Device Namespaces and ADS Rejection
+Paths matching Win32 device namespaces (`\\?\` or `\\.\`) or Alternate Data Streams (pattern `:$DATA`) are instantly flagged and rejected before entering the deletion queue.
 
-### Validation du binaire de service
-Avant de supprimer un service, le script lit son `ImagePath` dans le registre. Si le chemin du binaire ne correspond à aucun mot-clé PUA connu, la suppression est annulée avec un avertissement de collision de nommage.
+### Service Binary Verification (Automated Guard)
+Before knocking out a service, the script parses its registry `ImagePath`. If the binary path does not match the dynamically generated regex keywords derived from the threat intel, the deletion is canceled to prevent naming collisions with legitimate services.
 
-### Décodage des payloads Base64 dans les tâches planifiées
-Toutes les lignes de commande des tâches planifiées sont inspectées à la recherche de patterns PowerShell `-EncodedCommand`. Les payloads détectés sont décodés et ajoutés à la chaîne d'analyse avant la mise en correspondance — contrecarrant une technique d'obfuscation courante des PUAs.
+### Scheduled Task Base64 Decoding
+All scheduled task action command lines are scanned for PowerShell `-EncodedCommand` arguments (and all its common aliases like `-enc`, `-encoded`, etc.). Detected payloads are decoded on-the-fly and appended to the analysis string before string matching, bypassing common obfuscation tricks.
 
-### Boucle de ruches de registre inversée
-La boucle de nettoyage HKU est structurée en **Montage unique par utilisateur → itération de toutes les applications**, et non l'inverse. Cela minimise les cycles de montage/démontage de NTUSER.DAT et évite la contention des handles de registre. Un GC forcé (`GC.Collect()` + `WaitForPendingFinalizers()`) est appelé avant `reg unload` pour libérer tout handle PowerShell qui bloquerait l'opération.
+### Inverted Registry Hive Loop
+The HKU cleanup loop is structured as **Single mount per user ──► iterate all apps**, rather than mounting for each PUA. This minimizes registry churn and avoids handle leaks. A forced Garbage Collection (`GC.Collect()` + `WaitForPendingFinalizers()`) is called right before `reg unload` to free any locking PowerShell providers.
 
 ---
 
-## Utilisation
+## Usage
 
-**Prérequis :** PowerShell 5.1+ — Doit être exécuté en tant qu'**Administrateur**.
+**Prerequisite:** PowerShell 5.1+ — Must be executed from an **Elevated (Administrator)** shell.
 
 ```powershell
-# Exécution standard (nettoyage en conditions réelles)
+# Standard execution (Live system remediation)
 .\CleanPUA.ps1
 
-# Audit en mode simulation (aucune modification apportée au système)
+# Audit mode (Simulation only - no system changes)
 .\CleanPUA.ps1 -DryRun
 ```
 
-Un transcript horodaté est automatiquement sauvegardé dans :
+A timestamped audit transcript is automatically saved to:
 ```
 %TEMP%\CleanPUA_YYYYMMDD_HHMMSS.log
 ```
 
 ---
 
-## Mode DryRun
+## DryRun Mode
 
-Le switch `-DryRun` active une simulation complète du pipeline sans aucune modification système. Chaque action qui *serait* effectuée est affichée avec le préfixe `[DRY-RUN]`.
+The `-DryRun` switch activates a full pipeline simulation. Every single action that *would* be executed on a live endpoint is logged with a `[DRY-RUN]` prefix.
 
-Utilisez ce mode pour :
-- Auditer une machine avant de lancer le nettoyage réel
-- Valider la couverture de la threat intelligence avant déploiement
-- Générer des logs de preuves pour les rapports d'incident
+Use this mode to:
+- Audit an endpoint prior to running live remediation
+- Validate threat intel coverage before wide deployment
+- Generate tamper-proof evidence logs for incident documentation
 
 ```
-[!] MODE DRY-RUN ACTIF : Aucune modification ne sera apportee au systeme.
+[!] MODE DRY-RUN ACTIF : Aucune modification ne sera apporte au systeme.
 [DRY-RUN] Service identifie a neutraliser : ShiftUpdaterService (Etat actuel: Running)
 [DRY-RUN] Tache malveillante ciblee (ShiftLaunchTask) | Motif: Nom suspect + Binaire malveillant concordants.
 [DRY-RUN] Fichier/Dossier a supprimer : c:\users\john\appdata\local\shift
@@ -150,69 +145,71 @@ Utilisez ce mode pour :
 
 ---
 
-## Ce qui est nettoyé
+## What Is Cleaned
 
-Pour chaque PUA ciblé, le script supprime :
+For every targeted PUA family, the script automatically remediates:
 
-- **Services Windows** — arrêtés puis supprimés via `sc.exe delete` (repli : suppression directe de la clé de registre)
-- **Tâches planifiées** — mises en correspondance par préfixe de nom, chemin URI ou contenu de ligne de commande décodé
-- **Processus en cours** — terminés via `taskkill /F /T /PID` (arbre de processus complet)
-- **Désinstallateurs binaires** — exécutés silencieusement (`/VERYSILENT /NORESTART`) si présents
-- **Paquets MSI** — désinstallés via `msiexec /X` avec auto-découverte dans les deux ruches de registre x86 et x64
-- **Répertoires et fichiers utilisateur** — par profil, avec support des globs pour les artefacts d'installation dans Downloads/Temp
-- **Répertoires globaux** — `ProgramData`, `Program Files (x86)`, etc.
-- **Clés de registre HKLM** — suppression directe des clés
-- **Clés de registre HKU** — par utilisateur, avec support des wildcards, y compris le montage des ruches hors ligne pour les sessions inactives
-- **Clés Run** — entrées d'auto-démarrage par utilisateur avec correspondance par wildcard
-- **Politiques d'extensions de navigateur** — entrées forcées Chrome/Edge `ExtensionInstallForcelist` et `ExtensionSettings` dans HKLM et HKCU
+- **Windows Services** — Stopped and deleted via `sc.exe delete` (falls back to direct registry key deletion on error).
+- **Scheduled Tasks** — Matched via name prefix, folder URI path, or decoded command line arguments.
+- **Active Processes** — Terminated using `taskkill /F /T /PID` (kills the entire process tree).
+- **Binary Uninstallers** — Executed silently (`/VERYSILENT /NORESTART`) with native integrity checks.
+- **MSI Packages** — Cleaned via `msiexec /X` with an automated discovery engine scanning both x86 and x64 registry hives.
+- **WMI Persistence** — Automatic scanning and deletion of malicious `__EventConsumer`, `__EventFilter`, and `__FilterToConsumerBinding` objects matching the threat intel signatures.
+- **User Files & Directories** — Cleaned across all profiles, with glob support for temporary/download staging paths.
+- **Global Roots** — Cleaned inside `ProgramData`, `Program Files`, and shared OS locations.
+- **HKLM Registry Hives** — Full subkey recursive deletion.
+- **HKLM Run Keys** — Automated machine-wide startup value removal (`PulseBrowser`, etc.).
+- **HKU Registry Hives** — Scanned across active sessions and offline profiles (via manual hive loading), supporting wildcards and per-user `Run` key auto-starts.
+- **Browser Policies** — Wipes malicious forced extensions (`ExtensionInstallForcelist` and `ExtensionSettings`) inside Google Chrome and Microsoft Edge configurations based on the automated regex signatures.
 
 ---
 
-## Ajouter de nouvelles cibles PUA
+## Adding New PUA Targets
 
-Ajoutez une nouvelle entrée dans le tableau `$TargetApps`. Tous les champs sont optionnels (utilisez `$null` ou `@()` pour les champs inutilisés) :
+Simply append a new hashtable to the `$TargetApps` array. Every single field is optional (use `$null` or `@()` for unused fields):
 
 ```powershell
 @{
-    Name                 = "MonPUA"
-    ServiceNames         = @("MonPUAService")
-    ProcessNames         = @("monpua", "monpua-updater")
-    ProcessPathFilters   = @("*\appdata\local\monpua\*")
-    MSICode              = $null                               # ex. "{GUID}" ou $null pour auto-découverte
-    UninstallerRelPath   = "AppData\Local\MonPUA\unins000.exe"
-    InstallLocationHint  = "AppData\Local\MonPUA"             # utilisé pour l'auto-découverte MSI
-    UserDirectories      = @("AppData\Local\MonPUA", "AppData\Roaming\MonPUA")
-    UserFiles            = @("Desktop\MonPUA.lnk")
-    UserGlobs            = @("Downloads\MonPUA*.exe")
-    GlobalDirectories    = @("C:\Program Files (x86)\MonPUA")
-    HKLMRegPaths         = @("HKLM:\SOFTWARE\MonPUA")
-    HKURegPaths          = @("Software\MonPUA", "Software\Microsoft\Windows\CurrentVersion\Uninstall\MonPUA")
-    HKURunKeys           = @("MonPUA", "MonPUAUpdate*")        # supporte les wildcards
-    TaskPrefixes         = @("MonPUATache", "MonPUAUpdate-")
-    TaskURIs             = @("\MonPUA")
+    Name                 = "MyNewPUA"
+    ServiceNames         = @("MyPUAService")
+    ProcessNames         = @("mypua", "mypua-updater")
+    ProcessPathFilters   = @("*\appdata\local\mypua\*")
+    MSICode              = $null                               # e.g., "{GUID}" or $null for auto-discovery
+    UninstallerRelPath   = "AppData\Local\MyPUA\unins000.exe"
+    InstallLocationHint  = "AppData\Local\MyPUA"               # Used for automated MSI discovery
+    UserDirectories      = @("AppData\Local\MyPUA", "AppData\Roaming\MyPUA")
+    UserFiles            = @("Desktop\MyNewPUA.lnk")
+    UserGlobs            = @("Downloads\MyPUA*.exe")
+    GlobalDirectories    = @("C:\Program Files (x86)\MyPUA")
+    HKLMRegPaths         = @("HKLM:\SOFTWARE\MyPUA")
+    HKLMRunKeys          = @("MyPUAAutoStart*")                # Machine autoruns (supports wildcards)
+    HKURegPaths          = @("Software\MyPUA")
+    HKURunKeys           = @("MyPUA", "MyPUAUpdate*")          # User autoruns (supports wildcards)
+    TaskPrefixes         = @("MyPUATask-", "MyPUAUpdate")
+    TaskURIs             = @("\MyPUAFolder")
 }
 ```
 
-**Auto-découverte MSI :** Si `MSICode` est `$null` et `InstallLocationHint` est renseigné, le script analyse les deux ruches `HKLM:\SOFTWARE\...\Uninstall` et WOW6432Node pour trouver une valeur `InstallLocation` correspondante et en extraire le GUID automatiquement.
+**Automated MSI Discovery:** If `MSICode` is left as `$null` and an `InstallLocationHint` is provided, the script automatically parses standard Windows Uninstall registry hives (including 32-bit redirections) to locate a matching software directory and dynamically extract the uninstallation GUID.
 
 ---
 
-## Prérequis
+## Prerequisites
 
-| Prérequis | Détails |
+| Requirement | Details |
 |---|---|
-| Système d'exploitation | Windows 10 / 11, Windows Server 2016+ |
-| PowerShell | 5.1 ou supérieur |
-| Privilèges | **Administrateur** (obligatoire — vérifié à l'exécution) |
-| Dépendances | Aucune — basé uniquement sur PowerShell natif et les APIs Windows |
+| OS Support | Windows 10 / 11, Windows Server 2016+ |
+| PowerShell Engine | 5.1 or higher |
+| Privileges | **Elevated (Administrator)** — Checked at runtime |
+| Dependencies | None — 100% native PowerShell commands and core Windows binaries |
 
 ---
 
-## Avertissement
+## Disclaimer
 
-Ce script effectue des **opérations destructives irréversibles** sur des fichiers, clés de registre, services et tâches planifiées.
+This script performs **irreversible, destructive operations** on files, registry paths, services, and scheduled tasks.
 
-- Toujours tester avec `-DryRun` d'abord sur une machine hors production.
-- Consulter le transcript de log après l'exécution.
-- L'auteur décline toute responsabilité en cas de perte de données résultant d'une mauvaise utilisation ou d'une mauvaise configuration.
-- La threat intelligence (définitions des cibles PUA) peut devenir obsolète. Toujours vérifier la couverture sur des échantillons récents avant déploiement.
+- Always run the script with the `-DryRun` switch on a non-production test device first.
+- Inspect the generated transcript file thoroughly after execution.
+- The author accepts no liability for data loss or system degradation caused by misuse or incorrect configuration of the target matrices.
+- Cyber threat landscapes shift constantly. Ensure target definitions match recent malware or PUA variants before executing in corporate environments.
